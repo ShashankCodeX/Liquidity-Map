@@ -22,3 +22,7 @@ Adjust the swing length, visibility of swing and equal levels, equal-level sensi
 ## Notes
 
 The script is provided as-is. Its levels are based on the rules in the source and should be evaluated on your chart and timeframe; this repository does not make a performance or accuracy guarantee.
+
+## License
+
+Licensed under the MIT License; see [LICENSE](./LICENSE).
