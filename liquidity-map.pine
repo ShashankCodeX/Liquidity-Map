@@ -1,0 +1,277 @@
+//@version=5
+indicator("Liquidity Map [LW]", overlay=true, max_lines_count=500, max_labels_count=200)
+
+// ============================================================
+// INPUTS
+// ============================================================
+
+// Swing
+swing_len   = input.int(10, "Swing Length", minval=5, maxval=50, group="Swing Liquidity")
+show_swing  = input.bool(true, "Swing High/Low (Untested Wicks)", group="Swing Liquidity")
+
+// Equal Highs/Lows
+show_eq     = input.bool(true, "Equal Highs / Equal Lows (EQH/EQL)", group="Equal Levels")
+eq_thresh   = input.float(0.03, "EQH/EQL Sensitivity %", minval=0.01, maxval=0.5, step=0.01, group="Equal Levels")
+
+// Previous Day/Week
+show_pd     = input.bool(true, "Previous Day High/Low", group="Previous Levels")
+show_pw     = input.bool(true, "Previous Week High/Low", group="Previous Levels")
+
+// Line style
+line_width_weak   = 1
+line_width_strong = 2
+
+// ============================================================
+// COLORS — all minimal
+// ============================================================
+
+c_bull        = color.new(#4A8A5A, 30)   // muted green  — buy side liquidity
+c_bear        = color.new(#A04A4A, 30)   // muted red    — sell side liquidity
+c_eq          = color.new(#8A7A3A, 30)   // muted gold   — equal highs/lows
+c_pd          = color.new(#5B7FA6, 30)   // muted blue   — prev day
+c_pw          = color.new(#7A5BA6, 30)   // muted purple — prev week
+c_weak        = 70                        // transparency for unconfirmed
+c_strong      = 20                        // transparency for confirmed
+
+// ============================================================
+// SWING HIGH / LOW LIQUIDITY
+// — Draw line immediately from wick
+// — Make it stronger (less transparent) after 3 bar confirmation
+// — Line deleted once price sweeps through it
+// ============================================================
+
+swingHigh = ta.pivothigh(high, swing_len, swing_len)
+swingLow  = ta.pivotlow(low,  swing_len, swing_len)
+
+var line[] sh_lines  = array.new_line()
+var float[] sh_levels = array.new_float()
+var int[] sh_bars    = array.new_int()
+
+var line[] sl_lines  = array.new_line()
+var float[] sl_levels = array.new_float()
+var int[] sl_bars    = array.new_int()
+
+// Add new swing high line
+if show_swing and not na(swingHigh)
+    l = line.new(bar_index - swing_len, swingHigh, bar_index + 500, swingHigh,
+         color=color.new(c_bear, c_weak), width=line_width_weak,
+         style=line.style_dashed, extend=extend.none)
+    array.push(sh_lines,  l)
+    array.push(sh_levels, swingHigh)
+    array.push(sh_bars,   bar_index - swing_len)
+
+// Add new swing low line
+if show_swing and not na(swingLow)
+    l = line.new(bar_index - swing_len, swingLow, bar_index + 500, swingLow,
+         color=color.new(c_bull, c_weak), width=line_width_weak,
+         style=line.style_dashed, extend=extend.none)
+    array.push(sl_lines,  l)
+    array.push(sl_levels, swingLow)
+    array.push(sl_bars,   bar_index - swing_len)
+
+// Update swing high lines — strengthen after 3 bars, delete if swept
+if array.size(sh_lines) > 0
+    for i = array.size(sh_lines) - 1 to 0
+        l   = array.get(sh_lines, i)
+        lvl = array.get(sh_levels, i)
+        b   = array.get(sh_bars, i)
+
+        // Strengthen after 3 bars confirmation
+        if (bar_index - b) >= 3
+            line.set_color(l, color.new(c_bear, c_strong))
+            line.set_width(l, line_width_strong)
+            line.set_style(l, line.style_solid)
+
+        // Delete if price closes above (swept)
+        if close > lvl
+            line.delete(l)
+            array.remove(sh_lines, i)
+            array.remove(sh_levels, i)
+            array.remove(sh_bars, i)
+
+// Update swing low lines
+if array.size(sl_lines) > 0
+    for i = array.size(sl_lines) - 1 to 0
+        l   = array.get(sl_lines, i)
+        lvl = array.get(sl_levels, i)
+        b   = array.get(sl_bars, i)
+
+        if (bar_index - b) >= 3
+            line.set_color(l, color.new(c_bull, c_strong))
+            line.set_width(l, line_width_strong)
+            line.set_style(l, line.style_solid)
+
+        if close < lvl
+            line.delete(l)
+            array.remove(sl_lines, i)
+            array.remove(sl_levels, i)
+            array.remove(sl_bars, i)
+
+// ============================================================
+// EQUAL HIGHS / EQUAL LOWS (EQH / EQL)
+// — Two swing highs/lows within eq_thresh% of each other
+// — Strongest liquidity magnet — institutions always target these
+// ============================================================
+
+var float prevSH = na
+var float prevSL = na
+var int   prevSH_bar = na
+var int   prevSL_bar = na
+
+var line[] eq_lines  = array.new_line()
+var float[] eq_levels = array.new_float()
+
+if show_eq and not na(swingHigh)
+    if not na(prevSH)
+        diff = math.abs(swingHigh - prevSH) / prevSH * 100
+        if diff <= eq_thresh
+            // Equal high found — draw stronger line
+            midLevel = (swingHigh + prevSH) / 2
+            l = line.new(prevSH_bar, midLevel, bar_index + 500, midLevel,
+                 color=color.new(c_eq, c_strong), width=2,
+                 style=line.style_solid)
+            array.push(eq_lines,  l)
+            array.push(eq_levels, midLevel)
+            label.new(bar_index - swing_len, midLevel, "EQH",
+                 color=color.new(c_eq, 80),
+                 textcolor=color.new(c_eq, 0),
+                 style=label.style_label_left, size=size.tiny)
+    prevSH     := swingHigh
+    prevSH_bar := bar_index - swing_len
+
+if show_eq and not na(swingLow)
+    if not na(prevSL)
+        diff = math.abs(swingLow - prevSL) / prevSL * 100
+        if diff <= eq_thresh
+            midLevel = (swingLow + prevSL) / 2
+            l = line.new(prevSL_bar, midLevel, bar_index + 500, midLevel,
+                 color=color.new(c_eq, c_strong), width=2,
+                 style=line.style_solid)
+            array.push(eq_lines,  l)
+            array.push(eq_levels, midLevel)
+            label.new(bar_index - swing_len, midLevel, "EQL",
+                 color=color.new(c_eq, 80),
+                 textcolor=color.new(c_eq, 0),
+                 style=label.style_label_left, size=size.tiny)
+    prevSL     := swingLow
+    prevSL_bar := bar_index - swing_len
+
+// Delete EQH/EQL once swept
+if array.size(eq_lines) > 0
+    for i = array.size(eq_lines) - 1 to 0
+        l   = array.get(eq_lines, i)
+        lvl = array.get(eq_levels, i)
+        if close > lvl or close < lvl
+            if (close > lvl and high[1] < lvl) or (close < lvl and low[1] > lvl)
+                line.delete(l)
+                array.remove(eq_lines, i)
+                array.remove(eq_levels, i)
+
+// ============================================================
+// PREVIOUS DAY HIGH / LOW
+// — Strongest daily liquidity — always tested
+// ============================================================
+
+var float pd_high  = na
+var float pd_low   = na
+var float cur_high = na
+var float cur_low  = na
+var line pd_high_line = na
+var line pd_low_line  = na
+
+isNewDay = ta.change(time("D")) != 0
+
+if isNewDay
+    if not na(cur_high)
+        pd_high := cur_high
+        pd_low  := cur_low
+    cur_high := high
+    cur_low  := low
+
+    if show_pd
+        if not na(pd_high_line)
+            line.delete(pd_high_line)
+        if not na(pd_low_line)
+            line.delete(pd_low_line)
+        if not na(pd_high)
+            pd_high_line := line.new(bar_index, pd_high, bar_index + 500, pd_high,
+                 color=color.new(c_pd, c_strong), width=2, style=line.style_solid)
+            label.new(bar_index, pd_high, "PDH",
+                 color=color.new(c_pd, 80),
+                 textcolor=color.new(c_pd, 0),
+                 style=label.style_label_right, size=size.tiny)
+        if not na(pd_low)
+            pd_low_line := line.new(bar_index, pd_low, bar_index + 500, pd_low,
+                 color=color.new(c_pd, c_strong), width=2, style=line.style_solid)
+            label.new(bar_index, pd_low, "PDL",
+                 color=color.new(c_pd, 80),
+                 textcolor=color.new(c_pd, 0),
+                 style=label.style_label_right, size=size.tiny)
+else
+    cur_high := math.max(cur_high, high)
+    cur_low  := math.min(cur_low,  low)
+
+// ============================================================
+// PREVIOUS WEEK HIGH / LOW
+// ============================================================
+
+var float pw_high     = na
+var float pw_low      = na
+var float cur_w_high  = na
+var float cur_w_low   = na
+var line pw_high_line = na
+var line pw_low_line  = na
+
+isNewWeek = ta.change(time("W")) != 0
+
+if isNewWeek
+    if not na(cur_w_high)
+        pw_high := cur_w_high
+        pw_low  := cur_w_low
+    cur_w_high := high
+    cur_w_low  := low
+
+    if show_pw
+        if not na(pw_high_line)
+            line.delete(pw_high_line)
+        if not na(pw_low_line)
+            line.delete(pw_low_line)
+        if not na(pw_high)
+            pw_high_line := line.new(bar_index, pw_high, bar_index + 500, pw_high,
+                 color=color.new(c_pw, c_strong), width=2, style=line.style_solid)
+            label.new(bar_index, pw_high, "PWH",
+                 color=color.new(c_pw, 80),
+                 textcolor=color.new(c_pw, 0),
+                 style=label.style_label_right, size=size.tiny)
+        if not na(pw_low)
+            pw_low_line := line.new(bar_index, pw_low, bar_index + 500, pw_low,
+                 color=color.new(c_pw, c_strong), width=2, style=line.style_solid)
+            label.new(bar_index, pw_low, "PWL",
+                 color=color.new(c_pw, 80),
+                 textcolor=color.new(c_pw, 0),
+                 style=label.style_label_right, size=size.tiny)
+else
+    cur_w_high := math.max(cur_w_high, high)
+    cur_w_low  := math.min(cur_w_low,  low)
+
+// ============================================================
+// INFO TABLE
+// ============================================================
+
+var table t = table.new(position.top_right, 2, 6,
+     bgcolor=color.new(color.black, 85),
+     border_color=color.new(color.white, 80), border_width=1)
+
+if barstate.islast
+    table.cell(t, 0, 0, "LIQUIDITY",  text_color=color.new(color.white,40), text_size=size.tiny, bgcolor=color.new(color.gray,85))
+    table.cell(t, 1, 0, "TYPE",       text_color=color.new(color.white,40), text_size=size.tiny, bgcolor=color.new(color.gray,85))
+    table.cell(t, 0, 1, "━━",         text_color=color.new(c_bear,20),      text_size=size.tiny)
+    table.cell(t, 1, 1, "Sell Side",  text_color=color.new(c_bear,20),      text_size=size.tiny)
+    table.cell(t, 0, 2, "━━",         text_color=color.new(c_bull,20),      text_size=size.tiny)
+    table.cell(t, 1, 2, "Buy Side",   text_color=color.new(c_bull,20),      text_size=size.tiny)
+    table.cell(t, 0, 3, "━━",         text_color=color.new(c_eq,20),        text_size=size.tiny)
+    table.cell(t, 1, 3, "EQH / EQL",  text_color=color.new(c_eq,20),        text_size=size.tiny)
+    table.cell(t, 0, 4, "━━",         text_color=color.new(c_pd,20),        text_size=size.tiny)
+    table.cell(t, 1, 4, "Prev Day",   text_color=color.new(c_pd,20),        text_size=size.tiny)
+    table.cell(t, 0, 5, "━━",         text_color=color.new(c_pw,20),        text_size=size.tiny)
+    table.cell(t, 1, 5, "Prev Week",  text_color=color.new(c_pw,20),        text_size=size.tiny)
